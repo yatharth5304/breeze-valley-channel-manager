@@ -1,5 +1,9 @@
 # Domain Documentation
 
-This directory describes the internal hotel concepts, their responsibilities, relationships, and lifecycle rules.
+This directory describes the internal hotel concepts, responsibilities, relationships, lifecycle rules, and conceptual ERD.
 
-Start with [domain-model.md](domain-model.md). Refine it as implementation decisions are made.
+Start with:
+- [domain-model.md](domain-model.md) — canonical proposed domain model.
+- [ERD.md](ERD.md) — conceptual entity relationship diagram.
+
+Implementation details and persistence schema are intentionally not defined here.
