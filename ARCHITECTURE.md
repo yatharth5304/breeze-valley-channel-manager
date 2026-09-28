@@ -11,12 +11,12 @@ CHANNEL MANAGER
   Sync / Event Layer
   OTA Adapters
 
-This is a conceptual architecture, not a commitment to a particular framework or deployment topology.
+This is a conceptual architecture, not a commitment to multiple deployable services.
 
 ## Domain Boundary
 
 ### Core domain
-Property, RoomType, Room, RatePlan, Inventory, Reservation, ReservationRoom, Guest, Payment.
+Property, RoomType, Room, RatePlan, RateValue, RateRestriction, Inventory, Reservation, ReservationRoom, Guest, ReservationGuest, Payment, ReservationChange.
 
 ### Integration domain
 Channel, ChannelProperty, ChannelRoomMapping, ChannelRateMapping, SyncJob, SyncAttempt, WebhookEvent, OutboxEvent.
@@ -30,26 +30,61 @@ API / external entry points
   -> Domain rules/entities
   -> Infrastructure implementations
 
-OTA adapters sit at the infrastructure/integration boundary. They translate external payloads and invoke application-level contracts. They do not directly manipulate core database tables.
+OTA adapters sit at the integration boundary. They translate external payloads and invoke application-level contracts. They do not directly manipulate core database tables.
 
-## Module Boundaries
+## Logical Modules
 
-Detailed logical module responsibilities and allowed/prohibited dependencies are documented in docs/architecture/MODULE_BOUNDARIES.md.
+Detailed responsibilities are documented in docs/architecture/MODULE_BOUNDARIES.md.
 
-The modules are property, room, rate, inventory, reservation, guest, payment, channel, mapping, and synchronization. These are logical modules, not separate deployable services.
+Modules:
+property, room, rate, inventory, reservation, guest, payment, channel, mapping, synchronization.
+
+These are logical modules inside one application, not separate deployable services.
+
+## Persistence Design
+
+The persistence design is documented in docs/architecture/persistence-design.md.
+
+The recommended database is PostgreSQL. The logical model uses:
+- foreign-key relationships;
+- natural uniqueness where required;
+- historical reservation snapshots separate from current master data;
+- Property + RoomType + stay date as the inventory grain;
+- durable integration records for WebhookEvent, OutboxEvent, SyncJob, and SyncAttempt.
+
+No production schema or migration is defined yet.
+
+## Application Interfaces
+
+Application-level contracts are documented in docs/architecture/application-interfaces.md.
+
+The application layer owns:
+- reservation lifecycle;
+- inventory allocation/release;
+- rate lookup;
+- mapping resolution;
+- inbound normalized reservation processing;
+- webhook processing;
+- outbound synchronization orchestration;
+- idempotency;
+- transactional outbox behavior.
+
+Repositories and infrastructure implement contracts; OTA adapters do not bypass them.
 
 ## Synchronization
 
 ### OTA to Core
+
 OTA event/API
   -> OTA adapter
   -> WebhookEvent / normalized input
   -> idempotency
   -> application service
   -> reservation/inventory business operation
-  -> local event/audit records
+  -> OutboxEvent
 
 ### Core to OTA
+
 Core domain change
   -> transactional OutboxEvent
   -> SyncJob
@@ -57,19 +92,46 @@ Core domain change
   -> OTA API
   -> SyncAttempt / result
 
-## Inventory Authority
+An outbound network call must not hold a database transaction open.
+
+## Inventory Authority and Concurrency
 
 The channel manager maintains the authoritative local representation of sellable inventory.
 
-Inventory is modeled around Property + RoomType + stay date. Physical Room status can contribute to capacity, while explicit inventory controls can adjust sellable quantity.
+Inventory is Property + RoomType + stay date.
 
-OTAs are external distribution channels, not peer databases for the internal domain.
+The key invariant is:
 
-## Idempotency
+> Two concurrent reservation operations must not both consume the same last available inventory.
 
-For external reservations, canonical identity is Channel + external_reservation_id.
+The persistence layer must serialize or atomically guard affected Inventory rows. Candidate mechanisms include row-level locking, conditional updates, or SERIALIZABLE transactions with retry. Multi-row operations should use deterministic ordering to reduce deadlock risk.
 
-Inbound event IDs, when supplied, are separately deduplicated at the WebhookEvent boundary.
+No locking implementation is part of this milestone.
+
+## Transaction Boundaries
+
+Reservation + inventory changes are one transaction.
+
+Reservation/rate/inventory business changes + their OutboxEvent are one transaction.
+
+Inbound WebhookEvent processing and resulting business effects are transactionally coordinated after duplicate detection.
+
+Outbound OTA calls occur outside the local transaction.
+
+## Recommended Technology Stack
+
+The current proposal is documented in docs/architecture/technology-stack.md and ADR 0010.
+
+Proposed:
+- TypeScript + Node.js
+- NestJS
+- PostgreSQL
+- Drizzle
+- Vitest
+- PostgreSQL-backed outbox/synchronization polling initially
+- one modular application deployment
+
+This is a recommendation, not yet an approved implementation choice.
 
 ## Failure Model
 
@@ -77,8 +139,18 @@ The design accounts for API unavailability, timeouts, duplicate events, partial 
 
 ## Simplicity Constraint
 
-Start as a simple application with clear module boundaries. Introduce queues, separate services, or infrastructure components only when a concrete reliability, scale, or operational requirement justifies them.
+Start as a simple modular application with one relational database.
+
+Do not introduce Redis, Kafka, microservices, Kubernetes, service mesh, or other operational complexity without a demonstrated requirement.
 
 ## Current Design Status
 
-Domain entities and module boundaries are PROPOSED pending review. Technology choices and persistence schema remain intentionally open.
+Domain model: approved in principle.
+
+Persistence design: PROPOSED.
+
+Application interfaces: PROPOSED.
+
+Technology stack: RECOMMENDED / pending human approval.
+
+Production schema, migrations, APIs, frontend, and OTA implementations remain future milestones.
