@@ -12,5 +12,6 @@ Current decisions:
 - 0007 — Reservation History and Commercial Snapshots
 - 0008 — Guest and Reservation Guest Association
 - 0009 — Date-Specific Rates and Restrictions
+- 0010 — Initial Implementation Stack
 
 Statuses marked Proposed remain subject to human review.
