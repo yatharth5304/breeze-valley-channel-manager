@@ -1,12 +1,13 @@
 # Architecture Documentation
 
-This directory contains architectural models, persistence design, application contracts, synchronization design, and technology proposals.
+This directory contains architectural models, persistence design, concrete database schema design, application contracts, synchronization design, and technology proposals.
 
 Start with:
-- [persistence-design.md](persistence-design.md) — logical persistence mapping and transaction/inventory invariants.
-- [application-interfaces.md](application-interfaces.md) — application-layer contracts and infrastructure boundaries.
-- [technology-stack.md](technology-stack.md) — evaluated technology options and recommendation.
-- [MODULE_BOUNDARIES.md](MODULE_BOUNDARIES.md) — module responsibilities and dependency rules.
-- [synchronization.md](synchronization.md) — inbound/outbound synchronization model.
+- persistence-design.md — logical persistence mapping and transaction/inventory invariants.
+- database-schema-design.md — concrete PostgreSQL tables, constraints, indexes, concurrency strategy, idempotency, outbox persistence, and migration strategy.
+- application-interfaces.md — application-layer contracts and infrastructure boundaries.
+- technology-stack.md — evaluated technology options and approved implementation direction.
+- MODULE_BOUNDARIES.md — module responsibilities and dependency rules.
+- synchronization.md — inbound/outbound synchronization model.
 
-The technology stack is recommended but remains pending human approval. No production schema or application implementation is defined by these documents.
+The technology direction is approved in principle. The concrete schema and migration strategy are proposed for review. No production schema, migration files, or application implementation are defined by these documents.
