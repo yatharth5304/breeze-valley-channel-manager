@@ -41,33 +41,36 @@ property, room, rate, inventory, reservation, guest, payment, channel, mapping, 
 
 These are logical modules inside one application, not separate deployable services.
 
-## Persistence Design
+## Persistence and Concrete Schema Design
 
-The persistence design is documented in docs/architecture/persistence-design.md.
+The logical persistence model is documented in docs/architecture/persistence-design.md.
 
-The recommended database is PostgreSQL. The logical model uses:
-- foreign-key relationships;
-- natural uniqueness where required;
-- historical reservation snapshots separate from current master data;
-- Property + RoomType + stay date as the inventory grain;
-- durable integration records for WebhookEvent, OutboxEvent, SyncJob, and SyncAttempt.
+The concrete PostgreSQL schema proposal is documented in docs/architecture/database-schema-design.md.
 
-No production schema or migration is defined yet.
+The schema preserves:
+- foreign-key relationships
+- explicit uniqueness and idempotency constraints
+- historical reservation snapshots separate from current master data
+- Property + RoomType + stay date as the inventory grain
+- durable WebhookEvent, OutboxEvent, SyncJob, and SyncAttempt records
+- PostgreSQL row-level concurrency coordination for Inventory
+
+No production tables or migrations are created by the schema-design milestone.
 
 ## Application Interfaces
 
 Application-level contracts are documented in docs/architecture/application-interfaces.md.
 
 The application layer owns:
-- reservation lifecycle;
-- inventory allocation/release;
-- rate lookup;
-- mapping resolution;
-- inbound normalized reservation processing;
-- webhook processing;
-- outbound synchronization orchestration;
-- idempotency;
-- transactional outbox behavior.
+- reservation lifecycle
+- inventory allocation/release
+- rate lookup
+- mapping resolution
+- inbound normalized reservation processing
+- webhook processing
+- outbound synchronization orchestration
+- idempotency
+- transactional outbox behavior
 
 Repositories and infrastructure implement contracts; OTA adapters do not bypass them.
 
@@ -104,9 +107,9 @@ The key invariant is:
 
 > Two concurrent reservation operations must not both consume the same last available inventory.
 
-The persistence layer must serialize or atomically guard affected Inventory rows. Candidate mechanisms include row-level locking, conditional updates, or SERIALIZABLE transactions with retry. Multi-row operations should use deterministic ordering to reduce deadlock risk.
+The concrete schema design requires affected Inventory rows to be locked in deterministic order before availability is evaluated. PostgreSQL row-level locking is the proposed initial mechanism; bounded transaction retry handles transient deadlock/serialization failures where required.
 
-No locking implementation is part of this milestone.
+Multi-night and multi-room operations lock the union of all affected rows in deterministic order.
 
 ## Transaction Boundaries
 
@@ -118,11 +121,10 @@ Inbound WebhookEvent processing and resulting business effects are transactional
 
 Outbound OTA calls occur outside the local transaction.
 
-## Recommended Technology Stack
+## Approved Technology Direction
 
-The current proposal is documented in docs/architecture/technology-stack.md and ADR 0010.
+The technology direction is approved in principle:
 
-Proposed:
 - TypeScript + Node.js
 - NestJS
 - PostgreSQL
@@ -131,7 +133,7 @@ Proposed:
 - PostgreSQL-backed outbox/synchronization polling initially
 - one modular application deployment
 
-This is a recommendation, not yet an approved implementation choice.
+No Redis, Kafka, Kubernetes, microservices, or frontend implementation is introduced by this milestone.
 
 ## Failure Model
 
@@ -147,10 +149,12 @@ Do not introduce Redis, Kafka, microservices, Kubernetes, service mesh, or other
 
 Domain model: approved in principle.
 
-Persistence design: PROPOSED.
+Persistence design: approved in principle.
 
-Application interfaces: PROPOSED.
+Application interfaces: approved in principle.
 
-Technology stack: RECOMMENDED / pending human approval.
+Technology direction: approved in principle.
 
-Production schema, migrations, APIs, frontend, and OTA implementations remain future milestones.
+Concrete PostgreSQL schema and migration strategy: PROPOSED / pending review.
+
+Production schema, migration files, APIs, frontend, and OTA implementations remain future milestones.
