@@ -1,7 +1,7 @@
 # Project State
 
 ## Current Phase
-**Phase 1 — Persistence, Application Interfaces, and Technology Proposal**
+**Phase 2 — Concrete PostgreSQL Schema and Migration Strategy (Design Only)**
 
 ## Product
 Custom channel manager for Breeze Valley, initially one property in Panchgani/Mahabaleshwar, Maharashtra, India.
@@ -17,7 +17,7 @@ The domain remains property-generic. Multi-property workflows are not being impl
 
 ## Completed Work
 
-### DECIDED / ARCHITECTURAL CONSTRAINTS
+### APPROVED IN PRINCIPLE / ARCHITECTURAL DIRECTION
 - Core hotel domain is independent from OTA-specific code.
 - OTA integrations are isolated behind adapters.
 - Local inventory is authoritative.
@@ -25,12 +25,13 @@ The domain remains property-generic. Multi-property workflows are not being impl
 - Reservation/inventory effects require transactional consistency.
 - Synchronization must be retryable and auditable.
 - Architecture is a modular monolith, not a microservice system.
-- Event sourcing, Kafka, Kubernetes, and unnecessary infrastructure are explicitly out of scope.
+- Event sourcing, Kafka, Kubernetes, Redis initially, and unnecessary infrastructure are out of scope.
+- Approved technology direction: TypeScript, Node.js, NestJS, PostgreSQL, Drizzle, Vitest, PostgreSQL-backed transactional outbox initially.
 
-### DECIDED / DOMAIN MODEL
+### APPROVED IN PRINCIPLE / DOMAIN MODEL
 - RoomType is the canonical sellable inventory unit.
 - Room represents physical rooms and has ACTIVE, OUT_OF_ORDER, OUT_OF_SERVICE, and INACTIVE status.
-- RatePlan is a stable commercial definition attached to one RoomType.
+- RatePlan is a stable commercial definition attached to a RoomType.
 - Inventory is Property + RoomType + stay date.
 - Reservation current status is NEW, CONFIRMED, or CANCELLED.
 - MODIFIED is represented through ReservationChange history.
@@ -40,54 +41,80 @@ The domain remains property-generic. Multi-property workflows are not being impl
 - RateValue and RateRestriction separate date-specific commercial values from RatePlan.
 - PMS stay states remain outside the initial Channel Manager core.
 
-### PROPOSED / PERSISTENCE
-- PostgreSQL is the proposed relational persistence technology.
-- Inventory rows are the concurrency coordination point for Property + RoomType + stay date.
-- Reservation + inventory effects + required outbox intent form one local transaction.
-- Historical reservation commercial facts remain separate from mutable master data.
-- External identities and mapping identifiers use explicit uniqueness constraints.
-- Available inventory is derived rather than an independently editable source of truth.
-- Synchronization records are durable and retryable.
+## Concrete Schema Design
 
-### PROPOSED / APPLICATION INTERFACES
-- ReservationService
-- InventoryAvailability
-- InventoryAllocation
-- RateService
-- ChannelMappingService
-- ExternalReservationProcessor
-- WebhookProcessor
-- InventorySyncService
-- RateSyncService
-- ChannelAdapter capability ports
-- IdempotencyService
-- TransactionManager
-- OutboxService
-- business-oriented repository ports
+The concrete PostgreSQL proposal is documented in docs/architecture/database-schema-design.md.
 
-OTA-specific models remain behind adapters.
+Key schema decisions:
+- UUID internal identities.
+- date for stay dates; timestamptz for event/audit timestamps.
+- exact monetary values via PostgreSQL numeric.
+- text statuses with CHECK constraints rather than PostgreSQL enums initially.
+- explicit partial uniqueness for optional external identifiers.
+- default FK deletion behavior is restrictive; historical records are retained.
+- no independently editable available-inventory column.
+- ReservationRoom contains booking-time commercial snapshots.
+- ReservationChange is append-oriented history, not event sourcing.
+- WebhookEvent identity is distinct from Reservation identity.
+- OutboxEvent -> SyncJob -> SyncAttempt is durable PostgreSQL-backed work state.
 
-### RECOMMENDED / TECHNOLOGY STACK
-- TypeScript + Node.js
-- NestJS
-- PostgreSQL
-- Drizzle
-- Vitest
-- PostgreSQL-backed outbox/synchronization polling initially
-- one modular application deployment
+## Inventory Concurrency Design
 
-This recommendation is pending human approval and is documented in docs/architecture/technology-stack.md and ADR 0010.
+The concrete design requires:
+1. determine all affected Property + RoomType + stay-date Inventory rows;
+2. union/deduplicate rows for multi-room and multi-night operations;
+3. lock affected rows in deterministic order;
+4. validate availability;
+5. apply reservation/inventory changes atomically;
+6. append ReservationChange;
+7. insert required OutboxEvent;
+8. commit.
 
-## Important Invariants
+A failed availability check commits none of the business operation.
 
-1. Two concurrent reservations must not consume the same last available inventory.
-2. Reservation and inventory changes must not commit independently.
-3. Outbox intent must commit with the business change it represents.
-4. Duplicate external reservations/events must not create duplicate business effects.
-5. Historical reservation commercial meaning must survive master-data changes.
-6. OTA adapters must not directly mutate core persistence.
-7. Available inventory must not be independently edited as a second source of truth.
-8. Outbound network calls must not hold local database transactions open.
+Concurrent transactions serialize on shared Inventory rows. Bounded transaction retry is permitted for transient deadlock/serialization failures.
+
+No implementation SQL has been created.
+
+## Reservation / Idempotency Design
+
+- Internal identity: reservation_id.
+- External reservation identity: channel_id + external_reservation_id.
+- Webhook identity: channel_property_id + external_event_id.
+- ReservationChange identity: reservation_id + sequence_number.
+- SyncAttempt identity: sync_job_id + attempt_number.
+
+Duplicate delivery must not duplicate inventory effects.
+
+Late external changes must not blindly overwrite newer state. Exact OTA sequencing remains TO VERIFY.
+
+## Historical Data
+
+Reservations retain booking-time facts independently of mutable master data:
+- RoomType and RatePlan labels/identities
+- occupancy
+- dates and quantities
+- nightly pricing
+- currency
+- taxes/fees/discounts
+- meal/package facts
+- cancellation-policy snapshot
+
+Current RateValue/RateRestriction rows are not required to reconstruct historical reservation economics.
+
+## Migration Strategy
+
+Design only:
+- migrations owned by the application repository and version-controlled;
+- Drizzle is the approved migration-toolchain direction;
+- migration SQL must be reviewed before production;
+- production migrations run as explicit deployment steps;
+- prefer expand/contract and forward fixes over destructive rollback;
+- destructive changes require explicit review and staged handling;
+- deterministic idempotent reference seeds;
+- real PostgreSQL for integration/concurrency tests.
+
+No migration files have been created.
 
 ## Remaining TO VERIFY
 
@@ -110,28 +137,24 @@ This recommendation is pending human approval and is documented in docs/architec
 - Guest retention/privacy and deduplication/merge policy.
 - Exact OTA adapter capability contracts after channel documentation review.
 
-### Implementation
-- Exact migration tooling/workflow.
+### Implementation detail
+- Exact Drizzle schema/configuration conventions.
 - Exact PostgreSQL deployment/provider.
 - Exact runtime/deployment topology.
-- Concrete concurrency mechanism after implementation tests.
+- Final SQL form of concurrency guards and bounded retry policy after integration tests.
 
 ## Conflicts Discovered
 
-No conflict with the approved architecture was found.
+No domain or architecture conflict was discovered.
 
-The persistence design adds no new deployment boundary and preserves the existing core/integration separation.
+The concrete schema preserves the approved domain semantics and does not introduce a new deployment boundary or business rule.
 
 ## Current Objective
 
-Review and approve the persistence design, application interfaces, and recommended technology stack before implementation.
+Review the concrete PostgreSQL schema and migration strategy before any implementation begins.
 
 ## Next Milestone
 
-After human approval:
-1. lock the technology choices;
-2. design the concrete persistence schema and migration strategy;
-3. establish the application skeleton/module structure;
-4. implement core domain/application behavior and database access;
-5. test inventory concurrency/idempotency;
-6. only afterward begin isolated OTA adapter implementation.
+No implementation milestone is authorized yet.
+
+After this schema design is reviewed, the next milestone should be explicitly selected. A likely candidate is implementation planning/finalization of the Drizzle schema and migration workflow, but no such work should begin until this design is approved or corrected.
