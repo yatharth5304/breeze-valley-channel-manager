@@ -8,5 +8,9 @@ Current decisions:
 - 0003 — Reservation Identity and Idempotency
 - 0004 — OTA Mapping Boundary
 - 0005 — Outbox and Synchronization Boundary
+- 0006 — Inventory Semantics
+- 0007 — Reservation History and Commercial Snapshots
+- 0008 — Guest and Reservation Guest Association
+- 0009 — Date-Specific Rates and Restrictions
 
 Statuses marked Proposed remain subject to human review.
