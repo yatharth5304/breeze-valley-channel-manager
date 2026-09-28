@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-**Phase 0 — Domain Model and Application Boundaries**
+**Phase 0 — Domain Model Resolution**
 
 ## Product
 Custom channel manager for Breeze Valley, initially one property in Panchgani/Mahabaleshwar, Maharashtra, India.
 
-The domain model remains property-generic so additional properties can be supported later without hard-coding Breeze Valley into core entities. Multi-property workflows are not being implemented yet.
+The domain remains property-generic. Multi-property workflows are not being implemented yet.
 
 ## Target Channels
 - Agoda
@@ -20,49 +20,64 @@ The domain model remains property-generic so additional properties can be suppor
 ### DECIDED / EXISTING ARCHITECTURAL CONSTRAINTS
 - Core hotel domain is independent from OTA-specific code.
 - OTA integrations are isolated behind adapters.
-- Local inventory is authoritative for the channel manager.
+- Local inventory is authoritative.
 - External reservation identity must be idempotent.
 - Reservation/inventory effects require transactional consistency.
 - Synchronization must be retryable and auditable.
-- The architecture remains a simple modular application rather than premature microservices/infrastructure.
+- Architecture remains a simple modular application rather than premature microservices/infrastructure.
 
-### PROPOSED / DOMAIN DESIGN
-- Property -> RoomType -> Room hierarchy.
+### DECIDED / DOMAIN MODEL
 - RoomType is the canonical sellable inventory unit.
-- RatePlan belongs to a RoomType and represents a pricing/package rule.
+- Room represents physical rooms and has ACTIVE, OUT_OF_ORDER, OUT_OF_SERVICE, and INACTIVE status.
+- RatePlan is a stable commercial definition attached to one RoomType.
 - Inventory is modeled per Property + RoomType + stay date.
-- Reservation owns ReservationRoom lines and references Guest and Payment.
-- ChannelProperty connects a generic Channel to a Property.
-- ChannelRoomMapping maps RoomType to an external room/listing ID.
-- ChannelRateMapping maps RatePlan to an external rate-plan ID.
-- WebhookEvent is the inbound durable/idempotency boundary.
-- OutboxEvent is the outbound intent boundary.
-- SyncJob represents synchronization work; SyncAttempt records each execution.
-- MODIFIED is treated primarily as an auditable reservation change/version, not a permanent lifecycle state.
-- NO_SHOW, CHECKED_IN, and CHECKED_OUT are PMS-adjacent and not required by the initial channel-manager core.
+- Reservation current status is NEW, CONFIRMED, or CANCELLED.
+- MODIFIED is represented through reservation history rather than a permanent current status.
+- External reservation identity is Channel + external_reservation_id.
+- OTA event idempotency is separate from reservation idempotency.
+- Guest identity is reusable; ReservationGuest associates guests to reservations and supports primary/additional roles.
+- Payment is limited to reservation/channel-management information; raw card data and authentication secrets are excluded.
+- Date-specific commercial values and restrictions are separated from RatePlan.
+- RateValue represents date/occupancy-specific pricing.
+- RateRestriction represents date-specific selling controls.
+- PMS states NO_SHOW, CHECKED_IN, CHECKED_OUT remain outside the initial Channel Manager core.
 
-### PROPOSED / MODULE BOUNDARIES
-Logical modules are property, room, rate, inventory, reservation, guest, payment, channel, mapping, and synchronization.
+### PROPOSED / DOMAIN SEMANTICS
+- Inventory available quantity uses operational physical capacity minus manual blocks and reserved quantity, bounded at zero unless an approved overbooking policy exists.
+- Inventory overrides are explicit and auditable.
+- ReservationChange provides lightweight history rather than event sourcing.
+- ReservationRoom stores historical commercial booking facts required to understand the reservation.
+- Exact persistence representation remains open until technology selection.
 
-API/external entry points call application services. Core domain rules sit below application orchestration. Infrastructure and OTA adapters implement integration/persistence contracts.
+## Remaining TO VERIFY
 
-OTA adapters may call core application contracts but may not directly mutate core persistence.
+### Business policy
+- Whether overbooking is permitted and the allowance/policy.
+- Exact inventory override semantics: absolute sellable quantity versus additive adjustment.
+- Whether temporary reservation holds are required.
 
-## Open Questions
+### Commercial model
+- Exact occupancy dimensions and child-age pricing.
+- Exact cancellation-policy structure.
+- Whether advance-booking restrictions are required initially.
+- Exact MinLOS/MaxLOS/CTA/CTD capabilities required across target channels.
 
-### TO VERIFY
-- Exact inventory override and overbooking semantics.
-- Whether physical Room-level availability is needed beyond capacity derivation/status.
-- Reservation snapshot/version strategy for booked prices, taxes, and occupancy.
-- Guest merge/deduplication policy.
-- Exact cancellation-policy and rate-restriction structures.
-- Required payment statuses and OTA payment semantics.
-- Webhook payload retention/privacy requirements.
-- Exact OTA adapter ports after actual channel contracts are reviewed.
+### Reservation/integration
+- External modification/version sequencing available from each OTA.
+- Treatment of reservations received already cancelled.
+- Exact timezone/date semantics for stay nights and channel timestamps.
+- Required payment/refund fields per channel.
+- Guest retention, privacy, and deduplication policy.
+- Exact OTA adapter capability contracts after actual channel documentation is reviewed.
 - Persistence uniqueness/transaction implementation after technology selection.
 
+## Conflicts Discovered
+No conflict with the established architecture was found.
+
+One refinement was required: the earlier model treated Guest as directly referenced by Reservation and left historical reservation facts unresolved. This milestone introduces ReservationGuest and lightweight ReservationChange, which preserve the existing architecture without adding event sourcing or OTA-specific dependencies.
+
 ## Current Objective
-Review and confirm the proposed domain model and module boundaries before implementation technology is selected.
+Complete domain clarification before persistence and technology selection.
 
 ## Next Milestone
-After domain review, choose the implementation stack based on the approved domain/application boundaries, then design persistence and application interfaces without yet implementing OTA integrations.
+Human review/approval of the resolved domain semantics. After approval, select the implementation technology stack and design persistence/application interfaces. Do not implement OTA integrations until those foundations are approved.
