@@ -3,249 +3,145 @@
 ## Status
 **PROPOSED** — domain shape for implementation review. Technology, persistence schema, and OTA contracts remain unspecified.
 
-## Boundary
+## Core Domain
+Property, RoomType, Room, RatePlan, RateValue, RateRestriction, Inventory, Reservation, ReservationRoom, Guest, ReservationGuest, Payment, ReservationChange.
 
-### Core domain
-Property, RoomType, Room, RatePlan, Inventory, Reservation, ReservationRoom, Guest, Payment.
-
-### Integration domain
+## Integration Domain
 Channel, ChannelProperty, ChannelRoomMapping, ChannelRateMapping, SyncJob, SyncAttempt, WebhookEvent, OutboxEvent.
 
-The core domain must not depend on Agoda, MakeMyTrip, Goibibo, Booking.com, Airbnb, or any channel payload/model. Adapters translate external representations at the integration boundary.
+Core entities must not depend on OTA-specific payloads, IDs, or adapter implementations.
 
 ## Property
-Generic hotel/property context. The first configured property is Breeze Valley, but the entity is not property-specific.
+Generic hotel/property context. Breeze Valley is the initial configured property but is not hard-coded.
 
-Important fields: property_id, name, code, timezone, currency, structured address, status, created_at, updated_at.
-
-Responsibilities: own the property's room types, rooms, rate plans, inventory, and reservations.
-
-It must not contain OTA credentials, OTA room IDs, OTA rate IDs, or channel-specific configuration.
-
-Proposed status: ACTIVE, INACTIVE.
+Important concepts: property_id, name, code, timezone, currency, address, status, timestamps.
 
 ## RoomType
-Represents what is sold, such as Deluxe or Suite.
+Sellable room category such as Deluxe or Suite.
 
-Important fields: room_type_id, property_id, name, code, description, max_occupancy, status.
-
-Relationship: Property 1-to-many RoomType; RoomType 1-to-many Room.
+Property 1-to-many RoomType.
 
 ## Room
-Represents a physical room, such as 101, 102, 103.
+Physical room such as 101 or 102.
 
-Important fields: room_id, property_id, room_type_id, room_number/internal name, status, timestamps.
+RoomType 1-to-many Room.
 
-Proposed status values:
-- ACTIVE — participates in normal hotel operations.
-- OUT_OF_ORDER — temporarily unavailable and excluded from sellable capacity.
-- OUT_OF_SERVICE — unavailable for a longer-term/service reason and excluded from sellable capacity.
-- INACTIVE — retired/decommissioned or not part of current inventory.
+Statuses:
+- ACTIVE
+- OUT_OF_ORDER
+- OUT_OF_SERVICE
+- INACTIVE
 
-These statuses are separated because temporary operational unavailability is different from retirement.
-
-A channel manager may need Room for capacity derivation and reconciliation, but this does not make it a full PMS room-management system.
+OUT_OF_ORDER and OUT_OF_SERVICE both remove physical capacity; they are distinct operational states. INACTIVE removes the room from the active property inventory model.
 
 ## RatePlan
-A sellable pricing/package rule associated with a RoomType. Example: Deluxe -> Room Only; Deluxe -> Breakfast Included.
+Stable commercial package/rule attached to one RoomType.
 
-Important fields: rate_plan_id, property_id, room_type_id, name, code, meal_inclusion, cancellation_policy, occupancy_rules, status.
+Contains package identity, meal inclusion, cancellation-policy definition, occupancy rules, and status.
 
-One RoomType can have many RatePlans. A RatePlan belongs to one RoomType in the initial model. A RatePlan is not inventory or a physical room.
+One RoomType can have many RatePlans.
 
-Pricing for a date/occupancy belongs to the rate domain associated with the RatePlan. It must not be duplicated as the mutable current definition inside Reservation.
+RatePlan is not a physical room and does not contain one permanent date-independent price.
 
-Cancellation policy, meal inclusion, and occupancy rules belong to RatePlan. Stay restrictions such as minimum length of stay, closed-to-arrival/departure, and stop-sell controls belong to the rate/availability domain; exact representation is TO VERIFY.
+## RateValue
+Date-specific commercial price associated with a RatePlan.
+
+Minimum concepts: rate_plan_id, stay_date, occupancy context, amount, currency, timestamps/version.
+
+## RateRestriction
+Date-specific selling restrictions associated with a RatePlan.
+
+Minimum concepts: rate_plan_id, stay_date/date scope, MinLOS, MaxLOS, closed_for_sale, CTA, CTD, advance-booking limits.
+
+Restrictions are explicit and are not encoded through price or inventory values.
 
 ## Inventory
-Answers: how many units of a RoomType can be sold for a given stay date.
+Sellable quantity for Property + RoomType + stay date.
 
-Natural identity: property_id + room_type_id + stay_date.
+Inventory semantics are defined in docs/domain/inventory-semantics.md.
 
-Important concepts: inventory_id, property_id, room_type_id, stay_date, capacity/baseline, blocked_quantity, manual_adjustment, reserved_quantity, available_quantity, timestamps/version.
-
-Local inventory is authoritative for the channel manager. OTAs receive availability; they are not authoritative for local availability.
-
-Conceptual calculation:
-available = sellable_capacity - reserved_quantity - blocked_quantity + applicable_manual_adjustments
-
-This is not a final formula. It must avoid double-counting rooms excluded through Room status and support hotel-specific controls. Overbooking buffers, absolute overrides, and reservation holds are TO VERIFY.
-
-Active Rooms can provide baseline capacity for a RoomType. Inventory remains independently controllable at RoomType/date level so the hotel can block sellable inventory without changing physical-room master data.
-
-Reservation creation/modification/cancellation and inventory effects must be handled atomically.
+Core distinction:
+- physical capacity comes from physical Room state;
+- manual blocks/overrides are sellability controls;
+- reserved quantity comes from active reservations;
+- available quantity is a calculated business result.
 
 ## Reservation
-Booking aggregate supporting OTA and direct/local bookings.
+Booking aggregate for OTA and direct/local bookings.
 
-Important concepts: reservation_id, property_id, source_type, channel_id when externally sourced, external_reservation_id when externally sourced, status, created_at, updated_at, check_in, check_out, guest references, reservation-room lines, payment/financial references.
+Current status:
+- NEW
+- CONFIRMED
+- CANCELLED
 
-Relationships:
-- belongs to one Property
-- references Guest records
-- owns one or more ReservationRoom lines
-- may have zero or more Payment records
-- may have external identity for channel-originated bookings
+MODIFIED is represented through ReservationChange/history rather than a permanent current state.
 
-Do not copy mutable Guest, RoomType, RatePlan, or Payment master data wholesale into Reservation. Booking-time facts that must remain historically correct, such as booked price or occupancy, may require immutable snapshots/value objects; exact shape is TO VERIFY.
-
-Direct bookings may have no channel_id or external_reservation_id.
+External identity for OTA bookings is Channel + external_reservation_id.
 
 ## ReservationRoom
-Line item within Reservation describing the room category, stay, and booked rate facts.
+Reservation line containing booked RoomType, RatePlan, quantity, stay dates, occupancy, and historical commercial facts.
 
-Important concepts: reservation_room_id, reservation_id, room_type_id, rate_plan_id, quantity, check_in, check_out, booked occupancy, booked price/amount, currency, applicable taxes/fees.
-
-Physical Room assignment is optional and normally PMS/front-desk territory.
+It does not require a physical Room assignment.
 
 ## Guest
-Guest identity/contact data associated with reservations.
+Reusable guest identity/contact record.
 
-Important concepts: guest_id, name, required contact details, country/nationality where legitimately required, timestamps.
+Guest is intentionally smaller than a CRM/PMS guest profile.
 
-Store only data required for hotel/channel operations. Retention, privacy, and identity-verification fields are TO VERIFY.
+## ReservationGuest
+Association between Reservation and Guest.
+
+It supports primary guest, additional guests, and a guest appearing across multiple reservations.
+
+It is preferred over embedding one Guest directly into Reservation because guest identity is reusable while reservation-specific role/context remains local to the association.
+
+## ReservationChange
+Lightweight reservation history record.
+
+Captures creation/modification/cancellation history, sequence/version, source, timestamps, external references, and relevant changed facts.
+
+It is an audit/synchronization aid, not event sourcing.
 
 ## Payment
-Minimal reservation payment state, not a full accounting or payment-processing ledger.
+Minimal reservation payment state required for channel management.
 
-Important concepts: payment_id, reservation_id, status, amount, currency, non-sensitive payment method/type, external payment/reference identifier where needed, timestamps.
+Contains amount, currency, status, non-sensitive payment method/type, and external payment/reference information where required.
 
-Do NOT store raw card numbers, CVV/CVC, PINs, full magnetic-stripe data, or equivalent authentication secrets.
+Never store raw card numbers, CVV/CVC, PINs, or equivalent authentication secrets.
 
-Out of scope for now: accounting ledger, detailed settlement, invoicing, gateway processing, and full refund workflows unless explicitly added later.
+## Integration Domain
+Channel and ChannelProperty model the external distribution connection. ChannelRoomMapping and ChannelRateMapping translate internal RoomType/RatePlan identifiers to external identifiers.
 
-# Integration Domain
+WebhookEvent provides inbound durability/idempotency. OutboxEvent provides reliable outbound intent. SyncJob and SyncAttempt provide retryable, auditable synchronization work.
 
-## Channel
-Generic external distribution channel.
-
-Important concepts: channel_id, stable internal code such as AGODA, display name, adapter identifier, status.
-
-No property-specific credentials or mappings belong here.
-
-## ChannelProperty
-Connects a Channel to a Property and stores channel-specific property configuration.
-
-Important concepts: channel_property_id, channel_id, property_id, external property/hotel identifier, connection status, references to credential/configuration, sync settings.
-
-Relationship: Channel 1-to-many ChannelProperty; Property 1-to-many ChannelProperty.
-
-## ChannelRoomMapping
-Maps an internal RoomType to an external channel room/listing identifier.
-
-Important concepts: channel_room_mapping_id, channel_property_id, room_type_id, external room identifier, mapping status, timestamps.
-
-Internal and external IDs are distinct. Never assume equality.
-
-Mapping is at RoomType level initially because RoomType is the sellable inventory unit.
-
-## ChannelRateMapping
-Maps an internal RatePlan to an external channel rate-plan identifier.
-
-Important concepts: channel_rate_mapping_id, channel_property_id, rate_plan_id, external rate-plan identifier, mapping status, timestamps.
-
-Internal and external IDs are distinct. Mapping validity must be checked before synchronization.
-
-## WebhookEvent
-Durable record of an incoming external event before/while it is processed.
-
-Important concepts: webhook_event_id, channel_property_id, external event identifier when supplied, event type, received timestamp, processing status, payload hash/raw-payload policy, error metadata.
-
-Proposed lifecycle: RECEIVED -> PROCESSING -> PROCESSED or FAILED.
-
-Duplicate detection happens before business effects. Event-level deduplication complements reservation-level idempotency.
-
-## OutboxEvent
-Reliable handoff from a committed local business change to outbound synchronization.
-
-Important concepts: outbox_event_id, aggregate/entity reference, event type, event payload/version, created timestamp, processing state, retry/available time, deduplication key where needed.
-
-The event should be created in the same transactional boundary as the business change it represents.
-
-## SyncJob
-A unit of outbound or reconciliation synchronization work for a channel/property and target resource/event.
-
-Important concepts: sync_job_id, channel_property_id, job type, target/reference, status, priority if needed, scheduled/available time, completion/error metadata.
-
-Conceptual lifecycle: PENDING -> RUNNING -> SUCCEEDED or FAILED, with retryable failures retaining job identity.
-
-## SyncAttempt
-One execution attempt for a SyncJob.
-
-Important concepts: sync_attempt_id, sync_job_id, attempt number, started/completed timestamps, outcome, external response/reference where safe, error category/code, diagnostic metadata.
-
-SyncJob represents work; SyncAttempt records each execution so retries are observable.
-
-# Reservation Lifecycle
-
-Channel-manager booking state should be distinguished from PMS operational stay state.
-
-Core states:
-- NEW — booking received/created but not yet in its normal confirmed state.
-- CONFIRMED — active and accepted.
-- CANCELLED — cancelled and no longer consumes inventory.
-
-MODIFIED should be treated primarily as an auditable change/version event rather than a permanent status. This avoids a reservation remaining forever in MODIFIED.
-
-PMS-adjacent states:
-- NO_SHOW
-- CHECKED_IN
-- CHECKED_OUT
-
-These may be useful later but are not required by the first channel-manager core. If introduced, their ownership and synchronization behavior must be explicitly defined.
-
-# External Reservation Identity and Idempotency
-
-For an OTA-originated reservation, canonical external identity is:
-channel_id + external_reservation_id
-
-This pair must be unique within the relevant integration scope. Repeated delivery must resolve to the existing reservation path rather than create a duplicate.
-
-If an OTA supplies an event ID, that event ID is also deduplicated at WebhookEvent. Event-level and reservation-level idempotency are complementary.
-
-# Entity Relationships
+## Core Relationships
 
 Property
   -> RoomType
       -> Room
       -> RatePlan
-  -> Inventory (RoomType + stay date)
+          -> RateValue
+          -> RateRestriction
+  -> Inventory
   -> Reservation
-      -> ReservationRoom -> RoomType / RatePlan
-      -> Guest
+      -> ReservationRoom
+      -> ReservationGuest -> Guest
       -> Payment
+      -> ReservationChange
 
 Channel
   -> ChannelProperty -> Property
       -> ChannelRoomMapping -> RoomType
       -> ChannelRateMapping -> RatePlan
 
-WebhookEvent -> inbound processing -> Reservation/Inventory application services
-
-Core transaction -> OutboxEvent -> SyncJob -> SyncAttempt(s) -> OTA adapter
-
-Cardinality:
-- Property 1-to-many RoomType
-- RoomType 1-to-many Room
-- RoomType 1-to-many RatePlan
-- Property 1-to-many Inventory records
-- Property 1-to-many Reservation
-- Reservation 1-to-many ReservationRoom
-- Reservation 1-to-many Payment (or zero)
-- Channel 1-to-many ChannelProperty
-- Property 1-to-many ChannelProperty
-- ChannelProperty 1-to-many ChannelRoomMapping
-- ChannelProperty 1-to-many ChannelRateMapping
-- SyncJob 1-to-many SyncAttempt
-
-## Non-Goals
-This model does not define a full PMS, housekeeping system, accounting ledger, payment-card vault, CRM, or OTA-specific domain model.
+Core transaction -> OutboxEvent -> SyncJob -> SyncAttempt -> OTA adapter
+OTA -> WebhookEvent -> application service
 
 ## Open Questions
-- TO VERIFY: exact inventory override and overbooking semantics.
-- TO VERIFY: whether Room-level availability is needed beyond capacity derivation and status.
-- TO VERIFY: reservation snapshot/version strategy for booked rates, taxes, and occupancy.
-- TO VERIFY: guest merge/deduplication policy.
-- TO VERIFY: exact cancellation-policy structure and rate restriction vocabulary.
-- TO VERIFY: required payment statuses and OTA payment semantics.
-- TO VERIFY: event payload retention/privacy requirements.
+- TO VERIFY: exact occupancy dimensions and child-age rules.
+- TO VERIFY: exact cancellation-policy structure.
+- TO VERIFY: exact OTA restriction capabilities and sequencing.
+- TO VERIFY: inventory override/overbooking policy.
+- TO VERIFY: reservation timezone/date semantics per channel.
+- TO VERIFY: guest retention and privacy requirements.
+- TO VERIFY: payment/refund fields required per channel.
